@@ -1,0 +1,1095 @@
+---
+title: "Modernist Studies without Modernism"
+date: '`r format(Sys.Date(), "%B %e, %Y")`'
+author: Andrew Goldstone
+mainfont: Garamond Premier Pro
+mainfontoptions: 
+  - Numbers=OldStyle
+  - BoldFont=Garamond Premier Pro Semibold
+mathfont: Garamond Premier Pro
+mathfontoptions: 
+  - Numbers=OldStyle
+  - BoldFont=Garamond Premier Pro Semibold
+biblatex-chicago: false
+nobib: true
+manual-title: true
+chicago-ellipses: true
+headers: true
+orhead: \textsc{``modernist studies without modernism''} \thepage
+ocfoot: '\footnotesize Last processed: `r format(Sys.time(), "%B %e, %Y %H:%M %Z")`'
+routput: false
+anon: false
+caption: [font=footnotesize]
+output:
+  scuro::chiaro_pdf:
+    plot_font: Garamond Premier Pro Display
+    plot_font_options: [Numbers=OldStyle]
+    includes:
+      in_header: preamble.tex
+---
+
+\makeoddhead{myheadings}{\small\textsc{andrew goldstone}
+}{}{}
+\thispagestyle{myheadings}
+
+\begin{center}%
+    \large\fontspec{Garamond Premier Pro Display}
+Modernist Studies without Modernism \\
+\footnotesize (please refer to \href{https://osf.io/frcys}{osf.io/frcys} for the most recent circulating version of this essay)
+\end{center}
+
+
+```{r setup, cache=F, include=F}
+library(knitr)
+
+library(tidyverse)
+library(lubridate)
+library(ggrepel)
+
+library(boot)
+library(ineq)
+library(poweRlaw)
+
+library(mlaibr) # http://github.com/agoldst/mlaibr
+```
+
+```{r pct}
+pct_fmt <- function (prec, escape=F) {
+    sgn <- ifelse(escape, "\\%", "%")
+    function (x) {
+        str_c(round(x * 100, prec), sgn)
+    }
+}
+pct <- pct_fmt(0)
+```
+
+```{r plot-specs, cache=F}
+plot_theme <- theme_bw() + theme(
+    panel.border=element_rect(fill=NA,color=NA),
+    axis.ticks=element_line(color="grey90", size=0.5),
+    axis.line.x=element_line(color="grey90", size=0.5),
+    axis.line.y=element_line(color="grey90", size=0.5),
+    panel.grid=element_blank(),
+    legend.position="bottom"
+)
+knit_hooks$set(theme_bw=function (before, options, envir) {
+    if (before) theme_set(plot_theme)
+})
+```
+
+```{r print_tabular}
+# xtable helper
+print_tabular <- function (x, digits=0,
+                           alignment=paste(ifelse(sapply(x, is.numeric),
+                                                  "r", "l"),
+                                           collapse=""),
+                           include.colnames=T,
+                           floating=F, caption=NULL, label=NULL,
+                           ...) {
+    if (length(alignment) != 1 || !is.character(alignment)) {
+        stop("alignment must be a character vector of length 1")
+    }
+    if (nchar(alignment) == 1) {
+        alignment <- paste(rep(alignment, length(x)), collapse="")
+    }
+    if (!is.data.frame(x)) {
+        stop("x is not a data frame")
+    }
+
+    # xtable always wants an alignment char for the rownames
+    alignment <- paste("l", alignment, sep="")
+    xt <- xtable::xtable(x,
+        digits=digits, align=alignment,
+        caption=caption, label=label)
+    ll <- print(xt, comment=F, include.rownames=F,    # no row names, ever
+                include.colnames=include.colnames,
+                floating=floating, booktabs=T,
+                tabular.environment=ifelse(floating, "tabular", "longtable"),
+                print.results=F,
+                ...)
+    # xtable latex captured and returned this way so that you don't need to
+    # set results="asis" in the chunk options
+    knitr::asis_output(paste(ll, collapse="\n"))
+}
+```
+
+```{r load-mlaib, cache.extra=list(file.info(c("generated/b.tsv", "generated/subjects.tsv", "process_data.R"))$mtime)}
+# load cleaned and pruned bibliographic data generated from EBSCO RIS
+# exports---and if we don't find the files, run the script to produce them
+if (!file.exists("generated/b.tsv") || !file.exists("generated/subjects.tsv")) {
+    source("process_data.R")
+}
+b <- read_tsv("generated/b.tsv",
+    col_types=cols(id="c", pubtype="c", date="D", modernis_title="l",
+                   JO="c", PB="c")
+)
+subjects <- read_tsv("generated/subjects.tsv",
+    col_types=cols(id="c", value="c")
+)
+```
+
+```{r load-htrc-meta}
+# we're only going to use this for a single incidental number near the end
+htrc_dir <- "data/htrc-genre"
+htrc_genre_meta <- c("fiction_metadata.csv",
+                     "drama_metadata.csv", "poetry_metadata.csv") %>%
+    file.path(htrc_dir, .) %>%
+    map_dfr(read_csv, col_types=cols_only(
+        date=col_integer(), author=col_character())
+    )
+```
+
+```{r extract-subject-authors, cache.extra=list(file.info("non_authors.txt")$mtime)}
+# set up global values
+non_authors <- readLines("non_authors.txt") %>%
+    # strip comments
+    str_replace("#.*$", "") %>% 
+    str_trim()
+# get the frame with just authors
+subject_authors <- subjects %>%
+    filter(is_author(value)) %>%
+    transmute(id, term=subject_author(value)) %>%
+    filter(!(term %in% non_authors)) %>%
+    distinct(id, term) %>% ungroup()
+```
+
+```{r journal-pat}
+journal_pat <- . %>%
+    str_c(collapse="|") %>%
+    str_c("^", ., "$") %>%
+    regex(ignore_case=T)
+```
+
+```{r mod-core}
+core_journals <- c("modernism/modernity",
+                   "journal of modern literature") %>%
+    journal_pat()
+
+b_core_journals <- b %>%
+    filter(pubtype == "journal article") %>%
+    filter(str_detect(JO, core_journals))
+
+# publishers of past presidents of MSA
+msa_pres_pub <- c(
+    "Pennsylvania State UP", # Coyle
+    "Oxford UP", # McDonald
+    "U of Wisconsin P", # Dettmar
+    "Princeton UP", # Mao
+    "Duke UP",
+    "Stanford UP", # Wollaeger
+    "Cambridge UP", # McCabe
+    "Pennsylvania State UP",
+    "U of Massachusetts P", # Miller
+    "U of Michigan P",
+    "Harvard UP",
+    "Cambridge UP", # Cuddy-Keane
+    "Oxford UP", # Latham
+    "Cornell UP",
+    "U of Illinois P", # Caughie
+    "Oxford UP", # Morrisson
+    "U of Wisconsin P",
+    "Columbia UP", # Friedman
+    "Princeton UP",
+    "Cambridge UP",
+    "Indiana UP",
+    "Cornell UP", # Saint-Amour
+    "Oxford UP",
+    "Oxford UP", # Chinitz
+    "U of Chicago P",
+    "Columbia UP" # Walkowitz
+)
+```
+
+
+
+```{r core-journal-subject-authors}
+core_journal_authors <- b_core_journals %>%
+    select(id, date, JO) %>%
+    inner_join(subject_authors, by="id")
+```
+
+
+
+
+\noindent
+Covering the first Modernist Studies Association meeting in 1999, the *Chronicle of Higher Education* reported that "here and there, conference attendees did grumble that an association devoted to modernism might ultimately re-establish the same favored writers at the top of the heap" (Heller).
+Were the grumblers prophetic? In this essay I discuss evidence---quantitative as well as qualitative---about the development of modernist studies, which suggests, on balance, that they were. Like many other fields in literary and cultural study, recent modernist studies has seen many polemics in favor of a more expansive conception of its subject matter. These arguments have had much to say about broadening our ideas of modernism and modernity, and they have worried over the persistence of a modernist canon, but they have rarely taken stock of the social processes of disciplinarity that reproduce a shared understanding of the modernist subject matter. A study of these processes helps to show why widespread aspirations to expand the field of modernist studies have done less to open up the subject than might be hoped, and it sheds some light on the persistent tension in many period subfields between the wide range of possible research objects and the persistence of established touchstones. If modernist studies is exemplary, however, I show that it is also distinctive: in modernist studies, unlike Victorian studies or American studies, there is an unusually close correspondence between the norms of scholars in the subfield and the norms propounded by the writers they tend to study. I propose that, in view of the disciplinary mechanisms my analysis discloses, this correspondence does more harm than good. New lines of inquiry will require not just the determination to expand modernism but the institutionalization of a plausible alternative: a non-modernist modernist studies, or, less oxymoronically, a more capacious twentieth-century studies.
+
+It may seem superfluous to reopen the question of modernism's canon. For some time now, the dominant view in modernist studies has been that the subfield should have a highly expansive understanding of its object of study: as Douglas Mao and Rebecca Walkowitz say in their field-defining essay, "Were one seeking a single word to sum up transformations in modernist literary scholarship over the past decade or two, one could do worse than light on *expansion*" (737). The most ambitious versions of this program, extending "modernism" to cover the globe and the widest range of cultural production from the rarefied to the popular, expect to radically redefine what "modernist" means (Friedman). Notwithstanding this program's appeal, actual scholarly practice in modernist studies devotes a good deal of attention to a well-entrenched canon of modernism. This situation has increasingly been discusssed and worried over by scholars; Eric Hayot points to "the ongoing dominance of a core version of modernism, relentlessly unmodified by the arrival of previously noncanonical authors from a variety of national and social locations...even when most scholars agree that these new noncanonical authors *should* alter the core meaning of modernism!" (“Against" 744). Hayot argues elsewhere that the "ultimate" reason for the configuration of modernist studies is "Eurochronology," that is, a progressive, developmental understanding of cultural history (*On Literary Worlds* 6). More pointed is the judgment of Michael Bibby, who sees modernist studies as a "racial formation of whiteness," structurally disposed to underrepresent or actively exclude non-white writers like those of the Harlem Renaissance (487). This mode of ideological diagnosis is highly characteristic of theoretical debate in literary study; one aim of this essay is to give some consideration to an alternative kind of explanation for intellectual developments. Though the ideological climates described by Hayot and Bibby have a role to play in shaping practices, their analyses tend to suggest that *getting modernism right* in a principled way will lead to a more expanded subject matter by remedying mistaken or reprehensible exclusions. This essay, by contrast, focuses on the mediating processes by which the direction of modernist studies diverges from very widely agreed-upon principles of breadth and diversity. My emphasis lies less on deliberate exclusion than on the reproduction of scholarly legitimacy. I seek empirical evidence of the habits and taken-for-granted premises that shape scholarly choices and judgments in favor of a "core" modernism.
+
+
+The digitization of scholarly production and of scholarly indices provides new resources for characterizing a scholarly subfield like modernist studies. This essay analyzes thousands of entries downloaded from the online *MLA International Bibliography*. Alongside qualitative assessments of significant trends like Mao and Walkowitz's, a source like the *MLAIB* allows us to make quantitative statements about scholarship in the aggregate. Nonetheless, it is essential to understand the limitations of such statements. To quantify is to sacrifice some detail and particularity in exchange for the power to generalize systematically. Far from eliminating the challenges of interpreting textual evidence, quantification compounds them: in the *MLAIB*, each individual datum is itself produced by interpretive abstraction, *and* the aggregate data need interpretation in order to support arguments. 
+Despite the difficulties, aggregated evidence provides a way to substantiate claims about broad patterns in culture. This essay shares in the widespread recent interest in methods of quantification in literary and cultural studies. It differs in emphasis, however, from what is called, after Franco Moretti, "distant reading," because this study of literary scholarship is a study of literary *reception*, rather than literary production.[^distant]
+Yet scholarly reception is also production, both of texts and of knowledge. The broad supposition of this article is that basic social patterns in knowledge production play a major role in orchestrating the construction of the literary-historical past. What it means for a writer to be considered modernist is not just a matter of conceptual argument or definition but of the everyday ways scholars go about the their business. If this supposition is correct, readjusting the balance between a select canon and a broader cultural field in modernist studies---and other subfields as well---is an institutional as much as an intellectual problem.
+
+
+[^distant]: See Moretti. Reception tends to fall out of view in the focus on mining large text collections, though some recent work is beginning to take up the question of reception: See DeWitt and Underwood and Sellers. For a text-mining study of the history of literary scholarship, see Goldstone and Underwood. Jonathan Goodwin has used digital databases to support complex explorations of literary and other scholarship; see Goodwin and Laudun and Goodwin. The only study of these questions that uses the *MLAIB* is Damrosch's chapter on world literature studies. Bibby uses quantitative evidence from a hand-categorized sampling of anthologies and scholarship, but his strong focus on the racial representation of American modernist poetry limits the scope of his argument; I return to this point below.
+
+```{r top-auth-def}
+top_auth <- function (x, N=10) x %>%
+    count(term) %>%
+    mutate(frac=n / sum(n)) %>%
+    arrange(desc(n)) %>%
+    top_n(N, n)
+```
+
+```{r canon-flag}
+has_canon <- function (x, canon) subject_authors %>%
+    semi_join(x, by="id") %>%
+    group_by(id) %>%
+    mutate(canon=term %in% canon) %>%
+    summarize(canon=any(canon)) %>%
+    inner_join(x)
+```
+
+# defining modernist studies
+
+Current debates about the nature of modernism have their roots in the emergence of a distinctive field of modernist studies over the past three decades. This may seem a short time-span, since modernist literature has attracted academic interest since the early twentieth century. But a clearly defined period subfield, differentiated from literary criticism about contemporary writing, is a relatively recent development. 
+The postwar decades are usually cited as an origin: Harry Levin drew a line between modernism and the contemporary as early as 1960 (Levin), and organs like the *Journal of Modern Literature* (founded 1970) and the International James Joyce Foundation (founded 1967) provided specialized venues for scholarship on modernism, with Bradbury and McFarlane's widely-used anthology following in 1976.
+Yet these are only preliminary stages in the emergence of spaces of social interaction in which scholars pursue specific recognition as modernism specialists and organize their behavior in accordance with distinctive rules of modernist study.[^bourdieu-field]
+The crucial sign of this further stage of specialization is a *contestation* over the proper scope and content of the subdiscipline, a struggle exemplified in the emergence of new institutions, like *Modernism/modernity* (1994) and the Modernist Studies Association (1999). The association's inaugural conference theme was "The New Modernisms," and it is only a moderate exaggeration to say that modernist studies is invented at the same time as the *new* modernist studies.[^beebe]
+
+[^beebe]: Early modernism-defining scholarship like Maurice Beebe's 1974 *JML* essay (Beebe) signals not so much an incipient field of modernist studies as an ongoing argument between proponents of modernism and postmodernism, each of which could be understood to cover a significant part of the century. On the new modernist studies as a response to a postmodernist devaluation of modernism, see Latham and Rogers (131--45).
+
+We can better understand today's arguments over the content of modernist studies when we see that "modernist studies" crystallized precisely through arguments over the status and make-up of modernism. A subfield of "modernist studies" is rarely so named before 1990. Searching JSTOR for the phrase "modernist studies," one finds only a handful of occurrences in literary scholarship until the end of the 1980s, with the exception of a few references to the Canadian journal *Modernist Studies: Literature and Culture 1920--1940* (4 vols., 1974--1982). In literary scholarship, uses of "modernist studies" to refer to research on modernism seem to become current in the context of feminist work towards the end of the 1980s. Shari Benstock's description of Bonnie Kime Scott's *Gender of Modernism* (1990) as "nothing less than an absolutely necessary text for Modernist studies" is one of the earliest usages I have located, and the pages of *Tulsa Studies in Women's Literature* supply several other attestions.[^earlymodstuds]
+In a related but different vein in art history, Hal Foster invokes omissions from the "common purview of modernist studies" and "dominant modernist studies" in an early discussion of modernism and fascism from 1991 (66, 97).
+This pattern of usage suggests that "modernist studies" emerges as a key term, in part, by being made an object of canon-forming contention.
+
+[^bourdieu-field]: I draw here on Pierre Bourdieu's concept of the field, which supplies a key framework for my analysis. Bourdieu's distinction between regularities in practice and "conscious obedience to consciously devised and sanctioned rules" is particularly significant (*Logic* 35). In speaking of rules and the pursuit of rewards I do not mean that academics operate to formula or are consciously motivated by the pursuit of status---at least, not all the time. Bourdieu applies his own theory of cultural fields to literary scholarship in *The Rules of Art* (184--208), but he represents literary scholarship in rather dated terms which need some adaptation.
+
+
+[^earlymodstuds]: Benstock's remark is quoted on the back cover of Scott. Susan Squier mentions her own edited collection and Scott's anthology as books that "aim to rectify the male-oriented nature of modernist studies" (75); Rachel Blau DuPlessis, in a review essay, speaks of the difficulties of "normal modernist studies" in accounting for Gertrude Stein (297); Diane Chisholm chronicles feminist challenges to the view of H.D. in "modernist studies" (82). The MLA Division on Twentieth-Century Literature organized three panels under the title "The New Modernist Studies" at the 1994 MLA conference; DuPlessis chaired one and spoke on another ("Program" 1177).
+
+Scholarship on modernism in the years around 1990 proceeds as though *it matters what gets designated "modernist."* One can imagine an alternate history, in which "modernist" was not contested but instead left aside as unhelpful for the purposes of the new scholarship, one of those period labels whose coherence proves only ephemeral. Scott's anthology might have been called "The Gender of Early-Twentieth Literature"---a less resonant title, perhaps, but in line with her claim that "the politics and aesthetics of gender may lie at the heart of a comprehensive understanding of early twentieth-century literature" ("Introduction" 16).
+With the turn towards comprehensiveness, energized by a feminist critique of canonicity as such, scholars might have left "Modernist" to mean narrowly what it meant in the previous decade, and studies of early twentieth-century literature might have gravitated to other organizing terms: either modernism's conceptual rivals, like "avant-garde" and "experimental," or, just possibly, more neutral terms like "early twentieth-century."
+"Modernist" might have acquired some of the problematic sound of "Renaissance," and sought its own version of "Early Modern." But to put the matter this way is to see why these alternative possibilities seem remote. The cachet of modernity proves more durable than that of renascence. Scott dedicates her anthology "To the forgotten and silenced makers of modernism" (*Gender* v): this implies that "modernist" is a designation of *worth*, and to be excluded from it is to be devalued. The value-ladenness of "modernist" encouraged---and continues to encourage---contention over its inclusions and exclusions.
+
+It was not solely a question of defining a particular chronological slice of what is called, with considerable ambiguity, "the canon." No period field, whatever the degree of neutrality or value-ladenness of its organizing concept, would have escaped the debates over canonical inclusion and representativeness during the time in which "modernist studies" is first spoken of. Like scholars of any other period that has left us a wealth of material to consider, scholars of the early twentieth century face the basic question of which cultural objects are worthy of scholarly study and classroom attention.[^canon] But modernist studies formed around the specific presumption that what is worthy of attention in the twentieth century is worthy *because it is distinctively modern*. By contrast, Victorianists also have to be selective in their choice of texts, but those texts are not necessarily deemed worthy of attention because they are Victorian; the recuperation of major Victorian women writers does not dedicate itself "to the forgotten and silenced makers of Victorianism."
+Value-ladenness is a distinctive feature of the organizing concept of modernist studies, one not shared across all other subfields.
+
+Modernism is thus closer to other strongly interpretive period designations like Romanticism and the Enlightenment. Jerome McGann articulated the problem more than three decades ago in *The Romantic Ideology*: "Some writers and some works are not Romantic---even in the Romantic Period itself" (10). More recently, Dan Edelstein has used computational methods to investigate the significance of "Enlightenment" as a period designation in historical scholarship, finding that even as specialists have decisively challenged the unity of the Enlightenment (especially across national boundaries), "the vast majority of scholars...take its unity as a given" (22). For Edelstein, this is largely a symptom of intellectual inertia: revisionist historiography needs time to take hold. Yet, in modernist studies even more than in Enlightenment studies, the strong desire to lay claim to the positive associations of the label ("modern") limits the scope of revisionism.
+
+In a signal assessment of the field in the mid-1990s in *The Gender of Modernity*, Rita Felski implicitly recognizes this aspect of modernist studies when she argues that scholars should pragmatically retain "modernism" for texts that display "formally self-conscious, experimental, antimimetic features," while "simultaneously questioning the assumption that such texts are necessarily the most important or representative works of the modern period" (25).
+A descriptive characterization of modernism as an aesthetic category has a strong tendency to carry a positive evaluation along with it---as Felski implies by seeking to separate her description from her evaluation, though terms like "self-conscious" and "experimental" are themselves hardly value-neutral.
+
+
+[^canon]: Scholarly study and classroom attention are connected but not equivalent, and discussions of the "canon" sometimes confuse them. Both the causes and the consequences of selection for the classroom differ from the causes and consequences of selection of the objects of scholarship; the latter can *in principle* be far broader. See Guillory.
+
+Feminist and other revisionist modernist studies have two strategies for justifying scholarly attention in the field: valorizing objects within the terms of modernism, or defining a competing standard of selection. These two strategies are not entirely distinct, since with each realignment of what is discussed under "modernism," the meaning of the term ought to change---"if ever so slightly," as T.\ S. Eliot said of the tradition.
+Nonetheless, the establishment and persistence of "modernist studies" as a subfield label from the 1990s on suggests the relative predominance, when it comes to studies of early twentieth-century literature, of the former strategy.^[
+Jennifer Wicke's 2001 reflection on the advent of the "new modernisms" diagnosed their dependence on modernist "branding" or "appreciation": 
+"We can rebrand modernism, or various modernisms, but we cannot recapture the *Novum* of particular texts...in the absence of modernist appreciation" (401).
+]
+I propose the hypothesis that scholars' ongoing investment in valuing their objects in modernist terms works to stabilize the definition of modernism, and, in particular, to ensure that the list of dominant modernist authors changes very slowly.
+
+# the distribution of attention in modernist studies
+
+```{r jml-authors}
+jml90 <- b %>%
+    filter(str_detect(JO, "^Journal of Modern Literature$")) %>%
+    # $ to rule out Journal of Modern Literature in Chinese
+    filter(year(date) <= 1990)
+jml_authors90 <- jml90 %>% inner_join(subject_authors)
+jml_authors90_top <- jml_authors90 %>% top_auth(10)
+```
+
+```{r jml90-national}
+jml90natl <- subjects %>%
+    semi_join(jml90, by="id") %>%
+    filter(str_detect(value, " literature$")) %>%
+    summarize(
+        am=pct(mean(value == "American literature")),
+        eng=pct(mean(value == "English literature")),
+        ir=pct(mean(value == "Irish literature"))
+    ) %>%
+    unlist()
+```
+
+The *MLA International Bibliography* subject headings assigned to works of literary scholarship allow us to investigate this hypothesis about the continuity of modernist studies on a large scale. Consider, as a representative of scholarship on modernism before the new modernist studies, the first twenty years of the *Journal of Modern Literature*. The *MLAIB* records `r nrow(jml90)` articles from the journal over those two decades; the writers most frequently appearing as subjects in the journal are listed in table\ \ref{tab:jml-authors}.[^mlaib-note]
+The list of names is also representative of the list of national subject areas covered by the *JML*; the bibliography lists "American literature," "English literature," and "Irish literature," as the most frequent national-literature subjects (`r jml90natl["am"]`, `r jml90natl["eng"]`, and `r jml90natl["ir"]` of such headings, respectively---about the dominance of "American" I will have more to say below). And, of course, its masculine character is strongly marked: Woolf is alone among women as a frequent subject, and four times more frequent than Stein, the next most frequent. Here, if anywhere, is "high modernism" as a subject of study.
+
+```{r jml-authors-table}
+jml_authors90_top %>%
+    select(-n) %>%
+    mutate(frac=pct_fmt(1, escape=T)(frac)) %>%
+    rename(`author`=term,
+           "fraction of \\emph{JML} author-subjects"=frac) %>%
+    print_tabular(
+        floating=T,
+        alignment="lr",
+        # table.placement="H",
+        label="tab:jml-authors",
+        caption=str_c(
+            c("Most frequently studied \\emph{Journal of Modern Literature}",
+            " subject authors, ",
+            str_c(range(year(jml_authors90$date)), collapse="--"),
+            ". There are ", nrow(jml_authors90),
+            " total subject-author headings representing ",
+            n_distinct(jml_authors90$term), " different authors ",
+            "in ", n_distinct(jml_authors90$id), " articles in this period.",
+            " Source: \\emph{MLAIB}."
+            ),
+            collapse=""
+        ),
+        sanitize.text.function=identity
+    )
+```
+
+
+[^mlaib-note]: 
+Here and throughout, I am using records downloaded from the *MLA International Bibliography* in 2015 and 2016. I performed searches in the EBSCOhost interface and exported results in RIS format. Records include bibliographic information and subject headings for journal articles, books, book chapters, and dissertations. I processed the files, and carried out the numerical analyses throughout this essay, using the statistical computing software R. The R source code for the analysis is available via the Open Science Framework repository for this essay at [osf.io/frcys](https://osf.io/frcys).
+
+    A few caveats must be entered regarding the data. When I assign an item to a date, I use the first year of publication listed in the record; sometimes this does not reflect an actual year of publication, either because of journal issues spanning multiple years or because publication years are not always accurate, but I assume these discrepancies are rare. I have corrected obvious dating errors or duplicate records by hand where I found them but have not checked all of the database entries I consider. When I discuss authors in subject headings, I find these by checking for the presence of lifetime dates in parentheses in the heading, and I discard all relation terms, counting "compared to Joyce, James (1882-1941)" the same as "Joyce, James (1882-1941)." I remove any headings that are not names of authors by hand.  Note too that bibliographic information is sparser for items published before roughly 1980, and the subject indexing scheme changed in 1981, according to the [*MLAIB* website](https://www.mla.org/Publications/MLA-International-Bibliography/Content/Descriptors-and-Indexing). Aside from my initial discussion of the *JML*, I do not use the pre-1981 subject-heading material.
+
+    I attempted to update the data in November 2018 but was unable to acquire complete exports; many exported bibliography entries were missing information they contained three years before. The EBSCOhost export functionality appears to have developed serious defects since then, and I have had to rely on the data as it was available to me in 2015--2016.
+
+
+```{r decade-cdfs, fig.width=4, fig.height=4, out.width="\\textwidth", fig.cap="\\label{fig:decade-cdfs}Lorenz curves for subject authors of English-language MLAIB items which also have the subject ``1900--1999,'' by decade. Each curve is drawn by arranging the list of subject authors in order from least to most frequent, then plotting, for each given fraction of the population of subject authors (horizontal axis), the proportion of subject-author headings they account for (vertical axis). Frequencies of such subject headings, a form of symbolic capital, are typically very unevenly distributed.  The population of authors receiving a single mention grows ever more numerous over time, however, which in one sense makes the overall distribution less unequal with each decade. For an introductory treatment of Lorenz curves, see Cowell, chap. 2. Source: \\emph{MLAIB}."}
+b %>% semi_join(
+        subjects %>%
+            filter(value == "1900-1999"),
+        by="id") %>%
+    mutate(decade=floor(year(date) / 10) * 10) %>%
+    filter(decade %in% c(1970, 1980, 1990, 2000)) %>%
+    mutate(decade=str_c(decade, "s")) %>%
+    select(id, decade) %>%
+    inner_join(subject_authors) %>%
+    group_by(decade, term) %>%
+    summarize(weight=n()) %>%
+    arrange(decade, weight) %>%
+    # calculate lorenz curve
+    group_by(decade) %>%
+    mutate(rank=seq_along(weight) / n(),
+           frac=cumsum(weight) / sum(weight)) %>%
+    # put all four plots on single panel
+    ggplot(aes(rank, frac, group=decade, linetype=decade, color=decade)) +
+    geom_line() +
+    geom_abline(slope=1,intercept=0, color="gray80") +
+    scale_x_continuous(
+        labels=pct_fmt(0, escape=T),
+        name="\\% of authors") +
+    scale_y_continuous(
+        labels=pct_fmt(0, escape=T),
+        name="\\% of headings") +
+    scale_linetype_manual(name="",
+        values=c("dotted", "dotdash", "dashed", "solid")) +
+    scale_color_manual(name="",
+        values=c("black", "grey50", "grey50", "black"))
+```
+
+```{r jml90-has-canon}
+jml90_has_canon <- jml90 %>% has_canon(jml_authors90_top$term) %>%
+    summarize(mean(canon)) %>%
+    pull()
+```
+
+Yet the range of the journal is wide, covering many writers. Unlike the more tightly constrained world of the syllabus, in research, the existence of a few dominant topics of study does not mean the complete exclusion of other topics. Rather, subject-authors are organized in a *winner-take-most economy:* 
+these top `r nrow(jml_authors90_top)` figures represent `r mean(jml_authors90$term %in% jml_authors90_top$term) %>% pct_fmt(0)()` of all subject author headings and `r pct_fmt(0)(jml90_has_canon)` of articles. 
+The *JML* is not exceptional in this regard; figure \ref{fig:decade-cdfs} illustrates similar inequalities of attention across all *MLAIB* entries for work on the twentieth century. Typically, regardless of the details of selection from the bibliography, one finds that at least half of subject authors are attested only once.
+It is important to underline that these attestations, like all the subject headings, are an imperfect proxy for an author's symbolic capital within academic literary studies. The figures are based on scholarly production; some scholarship is much more widely read than the rest, of course, and does more to shape the field. That is why, for example, I have cited Scott and Felski above, implicitly claiming that their works are major interventions. An ideal analysis would also measure the influence of each individual work, but the available "bibliometric" (that is, citation) data on the typical literary studies article or book is quite sparse.  Second, the subject headings reflect the cataloguing choices of the MLA bibliographers, who have to recognize a subject in order to record it; since the primary purpose of the bibliography is to aid searches for scholarly works, the subject headings are not meant to be exhaustive.[^no-auth]
+Nonetheless, such caveats do not mean the data have nothing to say, only that the present analysis could and should be refined by further work.
+
+[^no-auth]:
+Of the almost four hundred thousand items assigned to the period subject "1900–1999,"
+`r subjects %>% 
+    filter(str_detect(value, coll("1900-1999"))) %>%
+    select(id) %>%
+    transmute(subj=id %in% subject_authors$id) %>%
+    summarize(mean(!subj)) %>%
+    pct()`
+do not contain any author-subject headings by my reckoning. Given the author-centric nature of literary study, most of these items undoubtedly do discuss authors. Thus the proportions of subject headings I give are estimates, not exact figures.
+
+
+```{r mm-authors}
+mm_authors <- core_journal_authors %>%
+    filter(str_detect(JO, regex("modernism/modernity", ignore_case=T))) %>% 
+    filter(year(date) <= 2014)
+mm_authors_top <- mm_authors %>% 
+    count(term) %>%
+    mutate(frac=n / sum(n)) %>%
+    arrange(desc(n)) %>%
+    top_n(10, n) %>%
+    select(-n)
+mm_authors_top %>%
+    mutate(frac=pct_fmt(1)(frac)) %>%
+    rename(`subject author`=term,
+           `fraction of author-subject headings`=frac) %>%
+    print_tabular(
+        floating=T,
+        # table.placement="H",
+        alignment="lr",
+        label="tab:mm-authors",
+        caption=str_c(
+            "Most frequently studied \\emph{Modernism/Modernity}",
+            " subject authors, 1994--2014.",
+            " There are ", nrow(mm_authors),
+            " total subject-author headings representing ",
+            n_distinct(mm_authors$term), " different authors ",
+            "in ", n_distinct(mm_authors$id), " articles in this period.",
+            " Source: \\emph{MLAIB}."
+        )
+    )
+```
+
+The contention over "modernism" that characterized the years around 1990 leads us to expect significant changes in the distribution of attention I have exemplified by the *Journal of Modern Literature* before that time. 
+Consider a twenty-year period starting with the founding of *Modernism/modernity* in 1994, devoted, as an early ad says, to "the methodological, archival, and theoretical exigencies particular to modernist studies."[^exigencies]
+Though the MSA does not begin formal meetings until 1999, from the mid-90s onwards "modernist studies" institutionalizes itself, with *Modernism/modernity* as a key component of the new formation. The subject-author headings from the first two decades of the journal attest a notably wider range of possibility, with many more names appearing at least once: `r n_distinct(mm_authors$term)` as compared to `r n_distinct(jml_authors90$term)` across roughly similar numbers of articles.^[The increase in range is, however, probably exaggerated by the increasingly detailed cataloguing practice in the *MLAIB* over time.] 
+This change must be contrasted with evidence of continuity: table \ref{tab:mm-authors} gives the most-studied authors of this new journal. The new entrants are Stein and Lewis; the eccentric appearance of Kenner and Marinetti is due to special issues (and Kenner is strongly associated with Joyce and Pound). Attention remains focused on English-language high modernist literature; the journal's interdisciplinarity is not visible in this summary of the "heavy tail" of the subject distribution. Two women now figure among these most frequent modernist subjects, rather than just one.
+Overall, the concentration on the most-discussed authors is comparable to, though somewhat less than, that in the earlier phase of the *JML*:
+`r b_core_journals %>%
+    filter(str_detect(JO, "[M|m]odernity")) %>%
+    has_canon(mm_authors_top$term) %>%
+    summarize(mean(canon)) %>%
+    pull() %>% pct_fmt(0)()
+`
+of articles on those top `r nrow(mm_authors_top)` (as against the early *JML*'s `r pct_fmt(0)(jml90_has_canon)`). The MLA subject headings for *Modernism/modernity* suggest that new *approaches* in modernist studies change the *objects* of study rather slowly.[^ineq-comparison]
+
+[^ineq-comparison]: Comparing the degree of inequality in two distributions (here, of subject-authors studied in the first two decades of the *JML* and in the first two decades of *Modernism/modernity*) is not straightforward, because there is more than one way to quantify inequality. Even once a quantitative measure is chosen, the question of what constitutes meaningful differences in inequality (or slow or rapid change in inequality) raises difficult technical questions.
+See, in a related context, Brower and Ganz, responding to Piper and Wellmon's study of the Ph.D. institutions of scholars publishing in literary studies journals.
+
+[^exigencies]:
+This position-taking appears in ads for the second issue, for example in the *JML* ("*Modernism/modernity*").
+
+The new journal is of course only one particular organ of modernist studies, and these tabulations reflect all the specifics of that journal, notably special sections and special issues. To confirm the trend as a broader phenomenon, we can construct the same subject-author tally for
+monographs and articles to which the *MLAIB* gives the subject heading "modernism" in the same period. (We still include *Modernism/modernity* articles, which are frequently given this heading.) A congruent pattern emerges, with one notable difference, namely, the ascendancy of Woolf over Joyce and Eliot (table \ref{tab:mod-authors}), due especially to the prominence of Woolf in *Modern Fiction Studies*. She is the most frequent subject author in that journal in the past two decades. One testament to the overall stability of these rankings, however, is the fact that Woolf, a central figure in journals and (especially) in dissertations on twentieth-century subjects since the 1990s, was also the most prominent woman modernist beforehand.[^woolf-mfs]
+
+[^woolf-mfs]: Toni Morrison is the next-most frequent subject author for *MfS*, a journal that explicitly includes both modernist and contemporary fiction in its remit. Among post–1994 dissertation abstracts with a twentieth-century subject heading in the *MLAIB*, Woolf is the most frequent subject author,
+appearing in entries for
+`r b %>%
+    filter(pubtype=="dissertation abstract") %>%
+    filter(year(date) >= 1994) %>%
+    semi_join(subjects %>% filter(value == "1900-1999"), by="id") %>%
+    inner_join(subject_authors) %>% top_auth(1) %>%
+    pull(n)
+`
+dissertations. But even if we restrict ourselves to indexed dissertations completed at least ten years earlier, Woolf is still the fifth-most frequent subject author (behind Faulkner, Joyce, Yeats, and Lawrence).
+
+
+
+```{r mod-authors}
+# create table of modernism/t subject hits
+mod_subj <- subjects %>%
+    filter(str_detect(value, regex("\\bmodernis[mt]", ignore_case=T))) %>%
+    select(id) %>%
+    distinct(id)
+mod_subj_auth <- b %>%
+    filter(year(date) >= 1994, year(date) <= 2014) %>%
+    filter(pubtype %in% c("book", "journal article")) %>%
+    select(id, pubtype) %>% inner_join(subject_authors) %>%
+    semi_join(mod_subj)
+mod_subj_auth_types <- mod_subj_auth %>% group_by(id) %>%
+    summarize(pubtype=first(pubtype)) %>%
+    count(pubtype) %>%
+    arrange(pubtype) %>%
+    pull(n)
+mod_subj_auth %>%
+    top_auth(10) %>% 
+    transmute(`subject author`=term,
+              `fraction of author-subject headings`=pct_fmt(1)(frac)) %>%
+    print_tabular(
+        floating=T,
+        alignment="lr",
+        label="tab:mod-authors",
+        caption=str_c(
+            "Subject authors most frequently appearing with subjects matching ``modernist'' or ``modernism,'' 1994--2014. The tallies represent subject headings for ",
+            mod_subj_auth_types[1], " books and ",
+            mod_subj_auth_types[2], " journal articles. Source: \\emph{MLAIB}."
+        )
+    )
+```
+
+```{r displ-fit}
+sa_dist <- displ$new(mod_subj_auth %>% count(term) %>% pull(n))
+sa_dist$setXmin(estimate_xmin(sa_dist))
+sa_dist$setPars(estimate_pars(sa_dist))
+set.seed(42)
+sa_gof <- bootstrap_p(sa_dist, threads=4, no_of_sims=1000)
+```
+
+These broad summaries suggest that the early 1990s do not produce a radical rupture in the configuration of modernist studies' collective choice of objects.
+One chief reason for this stability, as the case of Woolf suggests, is a very general process of *cumulative advantage* in subject matter choice: in new scholarship, already-popular subjects tend to receive more attention than others. The skewed distribution of subject frequencies is itself evidence for this process.[^powerlaw]
+In a pioneering essay in the sociology of science, Robert Merton described the "Matthew effect": "the accruing of greater increments of recognition to scientists of considerable repute and the withholding of such recognition from scientists who have not yet made their mark" (58).
+As Merton argued, this cumulative advantage was *functional* in a system of large and increasing scale: reputation is a powerful heuristic for deciding where to spend limited time and resources and for establishing continuity in research programs across the scientific community. The same goes for literary scholars' choices of modernist topics. The archive of twentieth-century literature presents an overwhelming range of possible objects of study. Recurring to well-studied writers gives scholars something in common to talk about, and some reassurance that the subject under discussion is worth the time. Such reassurances, whose appeal is no doubt enhanced by the uncertainties that dog each stage of academic life, from the undergraduate classroom to the ever-more-precarious later phases of the career, then help to reproduce the modernist subject matter in a familiar form.
+
+Yet to say that the most popular author-subjects change slowly may appear to miss the point, since it allows us only to see what scholars are writing *about* and not *how* they are writing about it or what arguments they are finally making: an essay on Joyce from the *JML* in 1970 is very different from one from *Modernism/modernity* in 2015---but both exist. The stability of the lists of highly-ranked figures is itself evidence of the functional power of focusing on a canon. But it also signals that "modernism" is not an empty container into which any meaning at all can be poured. Rather, new approaches still tend to prove themselves in studies that include already-valued authors. Paul Saint-Amour's recent *Tense Future* may advocate for a "weak modernism" in which strong judgments about the nature of modernism are suspended in order to address other historical, cultural, and aesthetic questions, but the book still devotes considerable attention to *Ulysses* and *Mrs.\ Dalloway* (37--43).
+This self-consciously non-exclusive version of modernism is not neutral in its accounting for culture, since it continues to distribute symbolic capital to "star" figures. Without deliberately ruling anything out, the practice raises the barriers to entry for new subject matter that does not come with a familiar authorial brand name.[^damrosch-joyce]
+
+The core names of modernism have a further significance, made evident in another institutional form in literary studies: the single-author journal. Eight of the ten figures in table \ref{tab:mod-authors} have had at least one single-author journal in existence for several decades.^[*Katherine Mansfield Studies* dates only to 2009; Eliot is the more notable exception, since though the *Yeats Eliot Review* was founded in 1974, there is no comparably long-established single-author journal. My survey of single-author journals is based on a search of the online *MLA Directory of Periodicals*.
+]
+None of the single-author journals dominates the material on modernism (as far as it is traceable in the *MLAIB*), but their existence probably helps to fortify the winner-take-most attention economy. If single-author studies have come to seem somewhat old-fashioned, or riskily akin to fandom, the persistence of single-author journals underlines the continuing usefulness of highly canonical author figures as communicative foci in scholarship. But the pragmatic function of such figures should not obscure that---as the *James Joyce Quarterly*, *European Joyce Studies*, the *Joyce Studies Annual*, *Hypermedia Joyce Studies*, and their ilk tell us by their very number---the major modernist authors are not just a convenient frame for discussion, as a "weak" theory of modernism might imply, but figures of high prestige. And this in turns suggests that an underlying premise does run through the changing themes and modes of analysis: a commitment to a more or less stable version of the literary in which Joyce and company remain exemplary. 
+
+[^damrosch-joyce]:
+As Damrosch remarks, "The high-end author consolidates his (much more rarely, her) market share by adding value from the postcanonical trends: the James Joyce who used to be a central figure in the study of European modernism now inspires ambitious collections of articles with titles like *Semicolonial Joyce*" (44–45).
+
+[^powerlaw]:
+One sign of a cumulative-advantage process (or what studies of networks call "preferential attachment," on which more below) is the conformity of the frequency distribution with a power law (the proportion of authors with frequency $n$ is proportional to $n^{-\alpha}$ for some positive $\alpha$). Quantitatively speaking, the post–1994 subject-author data summarized by table \ref{tab:mod-authors} give a moderately good fit to a discrete power law distribution with $\alpha = `r round(sa_dist[["getPars"]](), 2)`$. The goodness of fit test described by Clauset, Shalizi, and Newman gives $p = `r sa_gof[["p"]]`$ (1000 bootstrap replications, performed using the `poweRlaw` package for R), but other possible fits are not ruled out. On the statistics, see Clauset et al. For an introductory discussion of "preferential attachment" and the power laws, see Barabási, chap. 5. 
+
+```{r constitute-mod}
+general_journ_mod <- b %>%
+    filter(pubtype == "journal article") %>%
+    filter(str_detect(JO, regex(str_c(c(
+        "^new literary history: a journal of theory and interpretation$",
+        "^PMLA: Publications of the Modern Language Association of America$",
+        "^Critical Inquiry$",
+        "^Modern Language Quarterly", # subtitle often omitted
+        "^ELH"        ), collapse="|"), ignore_case=T))) %>%
+    filter(id %in% mod_subj$id | modernis_title)
+
+#        "Modern Fiction Studies$" # MFS: sometimes omitted
+
+mono_mod <- b %>%
+    filter(pubtype == "book") %>%
+    # we'll detect publishers anywhere in the PB field--in practice there's
+    # just one case where the publisher is mentioned along with another 
+    # institution ("Oxford UP, for the British Academy")
+    filter(str_detect(PB, regex(
+        str_c(msa_pres_pub, collapse="|"),
+        ignore_case=T))
+    ) %>%
+    filter(id %in% mod_subj$id | modernis_title)
+
+mod <- bind_rows(b_core_journals, general_journ_mod, mono_mod) %>%
+    mutate(year=year(date)) %>%
+    filter(year >= 1982, year <= 2014)
+```
+
+```{r mod-sa}
+mod_sa <- mod %>%
+    select(id, date) %>%
+    inner_join(subject_authors, by="id")
+```
+
+# change and collocation
+
+
+
+```{r star-effect}
+term_series <- function (x, breaks) x %>%
+    mutate(date=cut.Date(date, breaks)) %>%
+    group_by(date, term) %>%
+    summarize(weight=n()) %>%
+    mutate(frac=weight / sum(weight)) %>%
+    group_by(term) %>%
+    arrange(date) %>%
+    mutate(lagcw=lag(cumsum(weight), default=0))
+
+star_effect <- function (sa, srs, canon) srs %>%
+    # use series with cumulative totals
+    ungroup() %>%
+    # keep only lagging cumulative weight
+    transmute(term, lagcw, date=as.Date(date)) %>%
+    # now join x back on, so each term-date combo will get a lagcw value
+    inner_join(sa, by=c("term", "date")) %>%
+    group_by(date, id) %>%
+    # flag wagon-hitching and single-author articles
+    mutate(accompanied=any(term %in% canon),
+           solo=n() == 1) %>%
+    group_by(date, term) %>%
+    # calculate accompaniment score:
+    # proportion of articles where it's accompanied 
+    summarize(pre_weight=first(lagcw),
+              weight=n(),
+              solo=mean(solo),
+              accompanied=mean(accompanied)) %>%
+    filter(! term %in% canon)
+
+star_effect_year <- 2000
+```
+
+```{r mod-sa-canon}
+mod_sa_canon <- ungroup(mod_sa) %>% top_auth(20) %>% pull(term)
+```
+
+```{r mod-sa-star}
+mod_sa_star <- mod_sa %>%
+      star_effect(
+          term_series(mod_sa, "1 year"),
+          mod_sa_canon) %>%
+      ungroup()
+```
+
+```{r mod-diss-sa}
+mod_diss_sa <- b %>%
+    filter(pubtype == "dissertation abstract",
+           date >= min(mod_sa$date)) %>%
+    select(id, date) %>%
+    inner_join(mod_subj) %>%
+    inner_join(subject_authors)
+```
+
+But slow change at the top of the list of highly-ranked subject authors does not mean the panoply of modernist authors does not change at all, only that change happens within a framework of continuity.
+To investigate the mechanisms of change, I shift to a more selective dataset, which works against the potential overrepresentation of the long-established writers by single-author journals and which tries to give some extra emphasis to influential works of scholarship. Rating individual items according to their influence is, as I remarked above, difficult to do reliably, at least without an extensive hand-recording of citations.^[On the difficulties with the data, see Goodwin.]
+A somewhat less fraught selection can be made by publication venue. Among journals, let us now consider only items in the two most established modernist studies journals together with items about modernism in a set of reputable generalist journals, alongside modernist-relevant monographs from selected university presses.[^constitute-mod]
+This selection then lets us consider the ways the cumulative advantage of well-studied subjects can be counterbalanced by a scholarly search for originality in subject matter.
+
+New subject authors, however, are quite often introduced through what I term "wagon-hitching": that is, in conjunction with a much-discussed existing writer.^[Wagon-hitching is an example of what studies of networks call a "preferential attachment" process: new network nodes are more likely to link to highly-linked existing nodes than to relatively isolated ones. Barabási, chap. 5.]
+This dynamic in the broader process of canonization has been well-described by the sociologist Marc Verboord: "Critics must manoeuvre strategically between following the communis opinio and adding their own distinctive yet positively rated contributions to the discourse" (264).
+In this way a novel topic is made relevant to a larger community of discourse. Thus, Jessica Berman's compelling article "Comparative Colonialisms: Joyce, Anand, and the Question of Engagement" is the first treatment of Mulk Raj Anand in this set of works on modernist studies.
+The article both introduces Anand to the new modernist studies and juxtaposes his compressed *Bildungsromane* with Joyce's *Portrait*. But, of course, the same scholarly act also lends a new salience to Joyce as a colonial writer in a global framework. 
+
+
+[^constitute-mod]:
+\label{fn:constitute-mod}
+To be precise, the following paragraphs discuss all of the *Journal of Modern Literature* and *Modernism/modernity*, together with matches for the keywords "modernism" or "modernist" in subjects or titles of articles from *ELH*, *PMLA*, *Critical Inquiry*, *New Literary History*, and *MLQ* (chosen as well-regarded generalist journals across the period under study). To these I add books matching the same subject criterion issued from any university press that has published a monograph by a president of the Modernist Studies Association, restricting to the years `r min(year(mod$date))`--`r max(year(mod$date))`. This yields `r nrow(mod)` items discussing `r n_distinct(mod_sa$term)` subject authors.
+
+Wagon-hitching is fairly frequent.
+Within the set of modernist-studies articles and monographs, consider those subject authors who have appeared no more than once before the year `r star_effect_year`: there are
+`r mod_sa_star %>%
+    filter(year(date) >= star_effect_year, pre_weight <= 1) %>%
+    pull(term) %>%
+    n_distinct()
+`
+of these. In their earliest appearance after `r star_effect_year`, 
+`r mod_sa_star %>% 
+    filter(year(date) >= star_effect_year, pre_weight <= 1) %>%
+    group_by(term) %>%
+    filter(date == min(date)) %>%
+    ungroup() %>%
+    summarize(a=mean(accompanied), n()) %>% 
+    pull(a) %>%
+    pct()
+`
+appear in articles or books indexed as also having one of the `r length(mod_sa_canon)` most frequent pre-`r star_effect_year` figures as subjects. This is to say that adding a new writer as a subject of modernist discussion *also* appreciates a highly-ranked figure at least a quarter of the time.^[The list of such highly ranked figures gives a reasonable approximation to a classic modernist canon: `r str_c(str_replace(mod_sa_canon, ", .*$", ""), collapse=", ")`.]
+The true rate is likely considerably higher, since *MLAIB* subject headings do not comprehensively document every author discussed in a work.[^true-hitch]
+
+Dissertations do this more than articles, and books do it more than either: the rate of collocating new figures with high-ranking figures in modernist-subject dissertations since `r star_effect_year` is
+`r mod_diss_sa %>%
+    star_effect(
+        mod_diss_sa %>% term_series("1 year"),
+        mod_sa_canon
+    ) %>%
+    filter(year(date) >= star_effect_year, pre_weight <= 1) %>%
+    group_by(term) %>%
+    filter(date == min(date)) %>%
+    ungroup() %>%
+    summarize(a=mean(accompanied), N=n()) %>% 
+    transmute(str_c(pct(a), " over ", N, " dissertations")) %>%
+    pull()
+`; in monographs over the same period it is 
+`r star_effect(
+        b %>%
+        filter(pubtype == "book") %>%
+        select(id) %>%
+        inner_join(mod_sa),
+        mod_sa %>% term_series("1 year"),
+        mod_sa_canon
+    ) %>%
+    filter(year(date) >= star_effect_year, pre_weight <= 1) %>%
+    group_by(term) %>%
+    filter(date == min(date)) %>%
+    ungroup() %>%
+    summarize(a=mean(accompanied), N=n()) %>% 
+    transmute(str_c(pct(a), " over ", N, " books.")) %>%
+    pull()
+`
+This partly reflects the greater length of books, which gives more scope for combination than articles. The difference between dissertations and books is somewhat surprising: one would expect dissertations to be more cautious in breaking with established subject matter than books, but perhaps the pressure on presses and monograph authors to move towards obviously significant subject matter is more important. This hypothesis is supported by examining books in two recent publishers' book series on modernism. As of November 2018, Oxford University Press's *Modernist Literature & Culture* series, with 30 titles, has only four titles without one of the ten most-highly ranked modernist subject-authors in contents or description; in Columbia's *Modernist Latitudes* series, with 17 titles, 13 mention one of these same figures in contents or description ("Modernist Literature and Culture"; "Modernist Latitudes").^[
+The higher wagon-hitching rate for books perhaps also reflects both smaller sample size and greater cataloguing detail for monographs, especially for recent years, where the *MLAIB* frequently includes books' tables of contents as well. The general trend is not much affected by the choice of `r star_effect_year` as the *terminus a quo* as opposed to earlier or later years.
+]
+
+In any case, the importance of the monograph in the prestige system of the academic humanities means that wagon-hitching in modernist books is particularly important. The hierarchy of formats, acting in concert with book-market imperatives for caution and reliable branding, lends further weight to well-studied authors who appear together with new subjects of study. More than that, it tends to create an authoritative version of modernism in which, in spite of all attempts to weaken or expand the meaning of the term, its baseline sense is nothing other than reference to an established modernist canon. Indeed, it would clarify debates about the scope of modernist studies to distinguish between the highly-cited, rarely changed modernist *points of reference* and the widening scope of *possible modernist objects*. The bibliography provides little evidence that the latter transform into the former. Joyce and Pound can bestow modernism on those who travel with them, but it is they, not the fellow-travelers, who remain points of reference. 
+In conformity with the winner-take-most economy, the points of reference are really only a subset of even the most indisputably modernist grouping; the canonical writer featuring in the modernist monograph series' tables of contents is almost invariably Joyce, Woolf, Stein, Pound or Eliot---rather than slightly less-highly-ranked writers like Lawrence, Stevens, H.D., or Barnes, or non-English-language writers like Proust and Kafka.
+The tactical logic is clear: why measure a claim to modernist significance by anything but the *most* authoritative standard? Such calculations need not be deliberate; they can also be the effect of scholars orienting themselves in a field, combining an attempt to make a mark with a due tribute to established authority. And the tribute may be freely given, since those who enter the subfield of modernist studies are often those with deeply felt affinities for the most consecrated modernists.
+
+```{r true-hitch}
+set.seed(1922)
+hitch_check_sample <- mod_sa_star %>% filter(year(date) >= 2010, pre_weight <= 1, accompanied < weight) %>% sample_n(20) %>% inner_join(mod_sa %>% filter(year(date) >= 2010) %>% select(id, term))
+# Acc. No.    New Entrant             Wagon
+# 2011382432  Ghosh
+# 2011026367  Delsarte
+# 2014392508  Dr Atl
+# 2014380458  Díaz
+# 2013383049  Oǧuz
+# 2011031497  Allan
+# 2014396104  Zola
+# 2011027005  Von Freytag-Loringhoven Joyce
+# 2013383051  Eigner                  Williams
+# 2015380246  Eigner
+# 2015380256  Eigner
+# 2014396111  Thurston                Yeats
+# 2013380251  Sebald
+# 2011027015  (Film)
+# 2010296117  O'Brien                 Beckett,Joyce	
+# 2011396440  Baron
+# 2010296115  Tatlin	
+# 2011027004  Strindberg              Conrad
+# 2011027010  Cournos                 Eliot
+# 2012026056  Kracauer
+# 2012382163  Bernstein               Pound
+# 2014383616  Bernstein
+# 2013383045  Draper                  Stein
+```
+
+[^true-hitch]: I examined a random sample of twenty items from 2010 and after which introduce a new subject-author without also having a high-ranking figure as a subject in *MLAIB*, and found that eight nonetheless discussed such a figure. Of the remainder, several were clear cases of wagon-hitching, but to major theoretical names (Derrida) rather than novelists or poets; others concerned arts other than literature; and others reflected the *JML*'s increasing publication of material on more recent writers (e.g. Amitav Ghosh, Junot Díaz).
+
+
+
+```{r series}
+# MLC
+# miller	stein
+# abravanel	eliot
+# cole	eliot
+# killaney	pound
+# outka	woolf
+# levy	moore
+# pressman	pound
+# blanton	eliot
+# goldstone	blahblah
+# sherman	joyce etc
+# north	beckett
+# st-amour, ed.	joyce
+# bahun	woolf
+# rogers	joyce
+# preston	eliot
+# purdon	conrad	
+# hart	eliot
+# schoenbach	stein
+# latham	joyce
+# shulze	pound
+# graham	eliot
+# hayot	[none: but: actually woolf]
+# esty	conrad
+# spoo	joyce
+# hegglund	joyce
+# 
+# 
+# ModLat
+# vadde	joyce
+# marshik	[not in toc, but joyce in description]
+# bulson	eliot, joyce
+# hayot/walkowitz [none?]
+# reed [none]
+# rogers	pound
+# harris	eliot
+# preston	pound
+# davis woolf
+# lee	[none: american studies]
+# friedman	conrad
+# noland	[none]
+# israel	joyce
+# scappetone	pound
+# berman	joyce
+# mccrea joyce
+```
+
+
+
+# doing without modernism: twentieth-century studies
+
+```{r mod-nations}
+mod_nations <- mod %>% select(id, date) %>%
+      inner_join(subjects) %>%
+      filter(str_detect(value, " literature$")) %>% 
+      # exclude "popular literature," "children's literature," etc.
+      filter(value == "world literature" | str_detect(value, "^[A-Z]")) %>%
+      mutate(value=strip_subject_relation(value,
+          c(getOption("mlaib.relations"), "applied to"))) %>%
+      rename(term=value) %>%
+      mutate(term=str_replace(term, " literature", ""))
+```
+
+
+
+To what alternative should the distribution of attention in modernist studies be compared? It is far from self-evident that the standard should be equality: 
+the principles of distributive justice *for scholarly subject matter* are by no means clear. But a practice of marked inequality stands in need of justification.  Consider, by way of comparison to the world of authors, the geographic coverage of modernist studies. This coverage is registered by the *MLAIB* through its geographic and linguistic area subject headings. In the group of modernist-studies works I have been discussing, `r mean(mod$id %in% mod_nations$id) %>% pct()` have at least one "X literature" heading (e.g., "Russian literature" or "Swedish language literature"). The distribution of scholarly attention across these subject areas is, as with authorial names, highly skewed: there are `r n_distinct(mod_nations$term)` distinct areas "covered" by the `r nrow(mod)` modernist-studies journal articles and monographs, but American literature accounts for `r mean(mod_nations$term == "American") %>% pct()` of such headings in the putatively internationalist terrain of modernism;
+what the bibliography calls "English literature" is next (`r mean(mod_nations$term == "English") %>% pct()`). This ranking varies little over time (figure \ref{fig:nations}). This stability gives an indication of the dominance of English departments in modernist studies---and of American writers in modernism (national subject areas and subject authors' national origins usually match in the *MLAIB*).^[
+Reviewing a major anthology of work on global modernism, Katie Trumpener diagnoses the same phenomenon, suggesting that "Modernists (at least of the Anglo-American variety) have arguably been among the final holdouts" in the face of the globalizing turn initiated decades previously in comparative literature (624).
+]
+Preferential attachment is also a common phenomenon at the level of these subject areas. Of
+`r mod_nations %>%
+    group_by(id) %>%
+    summarize(multi=n() > 1) %>%
+    summarize(sum(multi)) %>%
+    pull()
+`
+modernist items in which two or more national subjects are mentioned,
+`r mod_nations %>%
+    group_by(id) %>%
+    filter(n() > 1) %>%
+    summarize(amlit=any(term == "American")) %>%
+    summarize(pct(mean(amlit))) %>%
+    pull()
+`
+include "American literature" (the next most frequent is "English literature"). The topology of the literary world given by modernist scholarship can be summarized as a network (figure \ref{fig:nation-network}) that shows the centrality of U.S. and English literature as points of comparison as well as frequent topics in themselves.
+
+```{r nations, fig.width=4, fig.height=2.5, fig.cap=str_c("\\label{fig:nations}Modernism olympics. Shares in national and linguistic subject headings of the form ``X literature,'' in two-year intervals, in ", nrow(mod), " modernist-studies items. ", n_distinct(mod_nations$term) - 3, " other headings are represented by light-gray lines. Source: \\emph{MLAIB}.")}
+top_nations <- mod_nations %>%
+    group_by(term) %>%
+    summarize(weight=n()) %>%
+    top_n(3, weight) %>% pull(term)
+
+scale_values <- function (f, top, default, top_vals) {
+    result <- rep(default, nlevels(f))
+    names(result) <- levels(f)
+    result[top] <- top_vals
+    result
+}
+
+mod_nations_plotdata <- mod_nations %>%
+    mutate(date=cut.Date(date, breaks="2 years")) %>%
+    group_by(date, term) %>%
+    summarize(weight=n()) %>%
+    mutate(weight=weight / sum(weight)) %>%
+    ungroup() %>%
+    mutate(date=as.Date(date),
+           term=factor(term))
+
+mod_nations_plotdata %>%
+    ggplot(aes(date, weight, group=term, color=term, linetype=term)) +
+        geom_line() +
+        scale_x_date(name="Publication date") +
+        scale_y_continuous(labels=pct_fmt(1, escape=T),
+                           name="\\% of national subjects") +
+        scale_color_manual(
+            name="",
+            breaks=top_nations,
+            values=scale_values(
+                mod_nations_plotdata$term, top_nations,
+                default="grey90",
+                c("black", "grey30", "grey50")
+            )
+        ) +
+        scale_linetype_manual(
+            name="",
+            breaks=top_nations,
+            values=scale_values(
+                mod_nations_plotdata$term, top_nations,
+                default="solid",
+                c("solid", "dashed", "dotted")
+            )
+        )
+```
+
+```{r igraph-setup, cache=F}
+library(igraph)
+set.seed(02138)
+```
+
+```{r nation-net, fig.width=6, fig.height=3, fig.cap="\\label{fig:nation-network}Modernist national topology: collocation network of national subject headings in generalist modernist-studies items with more than one such subject. Each point is a national or language subject heading (``American literature,'' ``English language literature''). Two points are joined if they occur together as the subjects of an item. Points are scaled by betweenness centrality, which reflects the frequency with which that point is on the shortest path between any two points; American literature is in this sense the most central in modernism. Points are placed on the plane using the Fruchterman-Reingold algorithm as implemented in the \\texttt{igraph} R package. Source: \\emph{MLAIB}."} 
+nat_g <- mod_nations %>%
+    group_by(id) %>% filter(n() > 1) %>%
+    do({
+        auths <- combn(.$term, 2)
+        data_frame(ego=auths[1, ], alter=auths[2, ])
+    }) %>% ungroup() %>%
+    select(ego, alter) %>%
+    as.matrix() %>%
+    graph_from_edgelist(directed=F)
+E(nat_g)$weight <- 1
+nat_g <- nat_g %>% simplify()
+coords <- layout_with_fr(nat_g)
+btw <- betweenness(nat_g, weights=rep(1, ecount(nat_g)))
+btw_label_floor  <- sort(btw, decreasing=T)[3]
+vs <- data_frame(
+    nation=V(nat_g)$name,
+    label=ifelse(btw >= btw_label_floor, nation, ""),
+    labeled=ifelse(label == "", "unlabeled", "labeled"),
+    btw=btw,
+    x=coords[ , 1],
+    y=coords[ , 2])
+edges <- as_edgelist(nat_g, names=F)
+es <- data_frame(
+    x1=coords[edges[ , 1], 1],
+    y1=coords[edges[ , 1], 2],
+    x2=coords[edges[ , 2], 1],
+    y2=coords[edges[ , 2], 2])
+ggplot(vs, aes(x, y)) +
+    geom_segment(data=es,
+        aes(x=x1, y=y1, xend=x2, yend=y2),
+        color="grey80",
+        size=0.5
+    ) +
+    geom_point(aes(size=scale(btw, center=F), color=labeled)) +
+    geom_text_repel(aes(label=label), vjust=1, nudge_y=-0.2) +
+    scale_color_manual(values=c(labeled="black", unlabeled="grey80")) +
+    theme_void() + theme(legend.position="none")
+```
+
+
+But this basic description of the structure of modernist studies' geographic attention does not imply that global modernist studies ought to operate like a United Nations of literature, with nominally equal representation from each national literature. Not only does that schema give undue weight to the nation as a framework for literature; it presumes an equation between *studying* something in research and *representing* its national identity in a quite imaginary political sphere. The connection between this imaginary and the politics of academic institutions is not obvious. Yet the persistence of "American literature" as a predominant domain in modernist studies is a problem *for research* if it narrows the horizon of scholarly understanding, inviting parochialism or imperial generalization without evidence. The danger is that American literature might operate as an unexamined standard of reference.
+
+```{r amstuds-top-auth}
+amstuds <- b %>% filter(JO %in% c(
+    "American Literature: A Journal of Literary History, Criticism, and Bibliography",
+    "American Quarterly",
+    "American Literary History")) %>%
+    filter(year(date) >= 1994, year(date) <= 2010)
+n_amstuds <- nrow(amstuds)
+amstuds_authors <- amstuds %>% inner_join(subject_authors, by="id")
+amstuds_authors_top <- amstuds_authors %>%
+    top_auth(10) %>%
+    pull(term)
+mod_jo <- b_core_journals %>% filter(year(date) >= 1994)
+mod_jo_authors <- mod_jo %>% inner_join(subject_authors, by="id")
+mod_jo_authors_top <- mod_jo_authors %>%
+    top_auth(10) %>%
+    pull(term)
+
+```
+
+Attention to authors has no self-evident distributive principle either. It is easy to reject obvious ills---like systematic bias on the basis of authors' race---but it is difficult to imagine scholars ever agreeing on what a fair allocation of symbolic wealth to authors would be. Is Joyce played out but Woolf still worth the time? Should Langston Hughes be the subject of more or fewer journal articles than Zora Neale Hurston?
+These are not questions to settle in the abstract. Nonetheless, the distributional characteristics of modernist studies are not universal to all the fields of cultural study. American studies offers a useful contrast, for it involves a wide-ranging comparative project which has been increasingly expansive across both cultural and political boundaries in the last few decades. Subject-author headings for *American Quarterly*, *American Literary History*, and *American Literature* are notably less concentrated than those for *Modernism/modernity* and the *JML*. In order to make a reasonable comparison, we can compare the `r n_amstuds` items from these Americanist journals between `r min(year(amstuds$date))` and `r max(year(amstuds$date))`  to the `r nrow(mod_jo)` items in the two modernist journals since `r min(year(mod_jo$date))`. 
+In the Americanist journals, 
+the top `r length(amstuds_authors_top)` subject authors (mostly nineteenth-century writers, of whom Melville is most frequent) account for 
+`r mean(amstuds_authors$term %in% amstuds_authors_top) %>% pct_fmt(0)()`
+of all subject-author headings and are found in 
+`r amstuds %>% has_canon(amstuds_authors_top) %>%
+    summarize(mean(canon)) %>%
+    pull() %>%
+    pct_fmt(0)()
+`
+of articles. The comparable proportions for the *JML* and *Modernism/modernity* are half as much again:
+`r mean(mod_jo_authors$term %in% mod_jo_authors_top) %>% pct_fmt(0)()`
+of all subject-author headings in the top `r length(mod_jo_authors_top)` and
+`r mod_jo %>% has_canon(mod_jo_authors_top) %>%
+    summarize(mean(canon)) %>%
+    pull() %>%
+    pct_fmt(0)()
+`
+of articles with these top figures as subjects. The bibliography likewise assigns fewer author-subject headings to the Americanist journals overall
+(`r sum(subject_authors$id %in% amstuds$id)` as opposed to
+`r sum(subject_authors$id %in% mod_jo$id)`):
+the author function itself may do less work to organize American studies than modernist studies. In any case, these data suggest that the ongoing redefinition of the Americanist subject matter, which was roughly contemporaneous with that of modernist studies, nonetheless proceeded on different lines: it is difficult to imagine, at least, that "American" continued to carry the same positive valence as "modernist" did in their respective subfields. I do not mean to imply that modernist studies *ought* to borrow the American-studies model, but the contrast---despite the predominance of "American literature" in modernist subjects!---shows that other ways of distributing the attention of cultural study are possible.
+
+But as long as scholarship is frequently organized by subject authors, and as long as the conceptual framework of modernism is so closely wedded to a small, nearly invariant hypercanon of central figures, the more general mechanism of cumulative advantage will always produce a sharply unequal distribution of attention. This mechanism is a process of a different kind from the kinds of social exclusion typically invoked in arguments about the content of modernism.[^bibby-arg]
+But to say this, or even to acknowledge the functional usefulness of the Matthew effect, is not to say we should be complacent about its consequences;  it only suggests there are necessary limits to attempts to rectify the representation of demographic or other categories within the framework of modernism.
+
+[^bibby-arg]: Bibby's main argument is of this type: "Modernist studies has organized itself around an object of knowledge that...necessarily excludes the work of New Negro poetry" (487). Bibby is certainly right that the construction of the modernist object of study has ensured the relative neglect of black writers, that this neglect in the present day is more likely a structural effect than one of deliberate discrimination, and that flagrant whiteness is a significant problem for a scholarly subfield of twentieth-century studies with pretences to comprehensiveness. But his own argument for the importance of New Negro writing to American modernism---understood as a "complex, diverse, and profoundly multicultural social moment" (487)---indicates some ambivalence about whether modernism's structuring logic is really as baleful as he otherwise suggests: it keeps to the founding assumption of modernist studies, that "modernist" is and should remain a mark of worth.
+
+These limits are all the stronger because the unavoidably evaluative understanding of the term "modernism" itself reinforces the process of accumulation for long-established modernist figures, both as individual subjects and as standards of comparison: a good modernist is a worthwhile scholarly investment. This process shapes not only the raw quantity of scholarly attention but also the interpretive and evaluative procedures brought to bear on new material.^[For an example of these procedures at work in the global-modernist reception of an English-language writer from South Asia, see Goldstone.]
+To be recognized as suitably innovative or experimental---suitably "modernist"---requires comparison with an existing modernist standard, in ways that tend to be favorable to the standard. 
+The data on the persistence of cumulative advantage suggest that efforts to identify modernisms across the globe (and, potentially, across history) will have trouble overturning an existing hierarchy of authorial prestige. More decisive transformations arise when scholars draw on organizational and symbolic resources external to modernist studies, as in the intervention of feminist studies, an intellectual movement that, while extending far beyond modernist studies, enabled the sustained rise of major women writers into the highest stratum of the modernist canon. Yet even these very significant changes do not alter the endurance of the  winner-take-most pattern, and the best-positioned figures of an earlier modernist-studies attention economy continue to retain their status.
+
+This dynamic makes modernist studies a field in which it is hard to represent any object of study as interesting unless it can be represented as modernist. I cannot celebrate with Sean Latham and Gayle Rogers when they assert, near the end of their historical overview of the concept of modernism, that "modernist studies has been strengthened by the lack of resolution over what exactly modernism *is*," arguing that the last two decades of modernist studies have thrived on proliferating versions of this much-qualified term.
+The *MLAIB* evidence does not support their contention that modernism now "serves simply as a kind of shorthand to mark almost any cultural or aesthetic work that appeared between roughly 1890 and 1970" (151).
+Rather, modernism serves as a useful shorthand for linking many, *but far from all*, cultural objects of interest from that long and expanding period to a much less mutable standard of comparison. The pattern of *X modernism* terminology---recent titles in the data I have considered mention late, paranoid, dialectical, Mesoamerican, popular, celebrity, diasporic, cosmopolitan, peripheral, meta-, and digital modernism---is symptomatic: *X* can be any modifier, but the noun modified is *modernism*.
+It is important not to underestimate the range and flexibility of this strategy, but it is equally important to spell out its genuine limitations.
+
+By comparison with its own earlier history, modernist studies is indeed expanding impressively, with more and more work on more and more subjects. But by comparison with the scale of cultural production *as such*, modernist studies remains tightly defined: the total number of 
+subject authors *MLAIB* associates with "modernism" or "modernist" is
+`r mod_subj %>% inner_join(subject_authors) %>%
+    summarize(n_distinct(term)) %>% pull()
+`. By contrast, the HathiTrust catalogue data for fiction, poetry, and drama books with publication dates between 1890 and 1922 includes
+`r htrc_genre_meta %>%
+    filter(date >= 1890, date <= 1922) %>%
+    summarize(n_distinct(author)) %>%
+    pull()
+`
+distinct author names, suggesting that for every writer who has been discussed even once under the modernist rubric, there may be roughly nine more entirely unstudied literary writers in the library, just from the first quarter of the twentieth century.[^htrc]
+
+Modernist studies has not encompassed this enormity, but this is not, I have been suggesting, a failure of omission. It is a functional part of a scholarly system oriented to the value of the modernist, dealing with the massive range of possibilities offered by the archive by intensively studying and elevating a more tractably scaled---and more charismatic---object of study. It ties modernist studies to the practices of modernism itself. Modernist writers like Joyce, Eliot, Stein, Pound, and Woolf defined themselves as specialist producers, distinguished from cultural production on the large scale in their publication media, their audience, and their strategies for seeking recognition and remuneration; one of their major tactics of distinction, furthermore, was to lay claim to a monopoly of historical significance. In Woolf's map of modern fiction, "some paths seem to lead to fertile ground, others to the dust and the desert" (146).
+A century later, a modernist scholarly enterprise growing on a larger scale than Woolf could have imagined is, in many ways, still following the paths she pointed out. 
+
+[^htrc]: The figure, which is highly approximate, is computed from the metadata for volumes in Underwood et al., "Word Frequencies in English-Language Literature, 1700–1922," which is to say it is based on HathiTrust library catalogue entries for books that have been machine-classified in these genres. Technical issues aside, this figure says nothing of the many writers whose work has not survived in the large research library collections HathiTrust represents. 
+
+
+The rewards of this identification with modernism are real: they create a subfield in which participants not only have matter to discuss but can invest in what they collectively feel are highly worthy objects. But scholarship also pays a price. The identification---"I'm a modernist," people say---suffers from a notable lack of scholarly distance. When modernists (the scholars of today) recapitulate the position-takings of modernists (the writers and artists of a century ago), they commit themselves to a necessarily partial understanding of the cultural field of that historical period: a Woolfian map, greatly updated and expanded, to be sure, but recognizably similar to its source. The sign of this particular understanding's symbolic power is that it can appear to be universally applicable; in modernist studies today, the risk of false universalism is greatest when abstractions like innovation, modernity, and rupture, developed to appreciate the core modernist writers, are applied in sharply different contexts.^[The most prominent case for the radical generalizability of these terms across time and space may be Susan Stanford Friedman's. Friedman is clear about the difficulties of separating the abstractions from their Euro-American orientation, but her aim of pluralizing modernities and modernisms entails a continuing investment in their evaluative content. Abstractions like "modernity" and "innovation" are more effectively critiqued not by being applied more widely but by being historically recontextualized within the cultural fields that produced them.]
+But scholarship that aspires to make sense of culture historically should not confound judgment with understanding; it should not confine itself within a system for ignoring great swathes of twentieth-century culture on the basis that it is unlikely to come up to a particular, quite contingent standard of worth. And indeed, the continuing calls for expansion in the subfield suggest that the intellectual strategy of sifting for modernist value may be reaching the limits of its usefulness, and a search for alternative objects is becoming more widely appealing. The very gradual decrease in the distribution of symbolic inequality for *MLAIB* authors is a possible indicator of this trend (see figure \ref{fig:decade-cdfs} above), which may indicate the gradual emergence of a body of scholarship about the twentieth century in which modernism no longer dictates the frame.
+
+Can modernist studies do without modernism? It would need another name, for which *twentieth-century studies* seems most suitable. The century label would be a better way to bring into coherence the most far-reaching versions of what currently goes by the "modernist" label, which often cross the boundary of the mid-century, especially when they also range beyond North America and Western Europe. The relative conceptual emptiness of the period category of the century, however, does not mean that twentieth-century studies needs no further organizing frameworks if it is to investigate more of that vast cultural archive which has been left in modernism's shadow. It requires not so much another all-encompassing totality, however, as a research program which recognizes the many ways scholars already have of making their objects matter without naming them as modernist and bringing them under the cumulative-advantage regime of modernism's authors. Against the seemingly total (but in reality limited) construct we call modernism, we can counterpose the many *aggregates* of cultural producers, artifacts, and audiences that are significant in themselves: genres, institutions, organizations, social movements, social groups, routes of circulation, regimes of reading, subcultures, cultural fields. Though I have used numbers in this essay, and I do mean to suggest that many cultural aggregates may be usefully studied with quantitative as well as qualitative methods, my proposal here emphasizes a different methodological principle. The research program of twentieth-century studies would be *armed with a reflexive knowledge of the social processes of scholarly appreciation*, so that it is able to confront and marginalize the modernist measure of value and its inevitable companion, the durable list of standard modernist authors, as but one aggregate among many. It is time to fight structure with structure, by defining other ways of organizing the panoply of twentieth-century culture. Instead of worrying about who is on top of the heap, we might build other edifices altogether.
+
+# works cited
+
+\footnotesize
+
+- Barabási, Albert-László. *Network Science*. Open access ed., 2014.
+\href{http://barabasi.com/networksciencebook}{barabasi.com/\\ networksciencebook}.
+
+- Beebe, Maurice. “What Modernism Was.” *Journal of Modern Literature*, vol. 3, no. 5, July 1974, pp. 1065–84.
+
+- Berman, Jessica. “Comparative Colonialisms: Joyce, Anand, and the Question of Engagement.” *Modernism/modernity*, vol. 13, no. 3, Sept. 2006, pp. 465–85.
+
+- Bibby, Michael. “The Disinterested and Fine: New Negro Renaissance Poetry and the Racial Formation of Modernist Studies.” *Modernism/modernity*, vol. 20, no. 3, Sept. 2013, pp. 485–501.
+
+- Bourdieu, Pierre. *The Logic of Practice*. Translated by Richard Nice, Stanford University Press, 1990.
+
+- ------. *The Rules of Art: Genesis and Structure of the Literary Field*. Translated by Susan Emanuel, Polity Press, 1996.
+
+- Bradbury, Malcolm, and James McFarlane, editors. *Modernism: 1890–1930*. Penguin, 1976.
+
+- Brower, Jordan, and Scott Ganz. "One Finch, Two Finch, Red Finch, Blue Finch: Measuring Concentration and Diversity in the Humanities, A Response to Wellmon and Piper." *In the Moment*. *Critical Inquiry*, July 24, 2017. [critinq.wordpress.com/2017/07/24/one-finch-two-finch-red-finch-blue-finch-measuring-concentration-and-diversity-in-the-humanities-a-response-to-wellmon-and-piper/](https://critinq.wordpress.com/2017/07/24/one-finch-two-finch-red-finch-blue-finch-measuring-concentration-and-diversity-in-the-humanities-a-response-to-wellmon-and-piper).
+
+- Chisholm, Dianne. “H. D.’s Auto*hetero*graphy.” *Tulsa Studies in Women’s Literature*, vol. 9, no. 1, Spring, 1990, pp. 79–106.
+
+- Clauset, Aaron, et al. “Power-law Distributions in Empirical Data.” *SIAM Review*, vol. 51, no. 4, 2009, pp. 661–703. *ArXiV*, [arxiv.org/abs/0706.1062](http://arxiv.org/abs/0706.1062).
+
+- Cowell, Frank. _Measuring Inequality_. 3rd ed. Oxford University Press, 2011.
+
+- Damrosch, David. “World Literature in a Postcanonical, Hypercanonical Age.” *Comparative Literature in an Age of Globalization*, edited by Haun Saussy, Johns Hopkins University Press, 2006.
+
+- DeWitt, Anne. “Advances in the Visualization of Data: The Network of Genre in the Victorian Periodical Press.” *Victorian Periodicals Review*, vol. 48, no. 2, Summer, 2015, pp. 161–182.
+
+- DuPlessis, Rachel Blau. Review of *Virginia Woolf and the Madness of Language*, by Daniel Ferrer, and *Reading Gertrude Stein: Body, Text, Gnosis*, by Lisa Ruddick. *Tulsa Studies in Women’s Literature*, vol. 10, no. 2, Autumn, 1991, pp. 295–98.
+
+- Edelstein, Dan. “Enlightenment Scholarship by the Numbers: dfr.jstor.org, Dirty Quantification, and the Future of the Lit Review.” *Republics of Letters*, vol. 4, no. 1, Oct. 2014.
+
+- Eliot, Simon. *Some Patterns and Trends in British Publishing, 1800–1919*. Bibliographical Society, 1994.
+
+- Felski, Rita. *The Gender of Modernity*. Harvard University Press, 1995.
+
+- Foster, Hal. “Armor Fou.” *October*, vol. 56, no. Spring, 1991, pp. 64–97.
+
+- Friedman, Susan Stanford. *Planetary Modernisms: Provocations on Modernity Across Time*. Columbia University Press, 2015.
+
+- Goldstone, Andrew. “Hatterr Abroad: G. V. Desani on the Stage of World Literature.” *Contemporary Literature*, vol. 55, no. 3, Fall, 2014, pp. 466–500.
+
+- Goldstone, Andrew, and Ted Underwood. “The Quiet Transformations of Literary Studies: What Thirteen Thousand Scholars Could Tell Us.” *New Literary History*, vol. 45, no. 3, Summer, 2014, pp. 359–84.
+
+- Goodwin, Jonathan. “Topic modeling *Modernism/modernity*.” *Modernism/modernity Print Plus*, vol. 1, no. 2, May 2016. [modernismmodernity.org/forums/posts/topic-modeling-modernismmodernity](https://modernismmodernity.org/forums/posts/topic-modeling-modernismmodernity).
+
+- Guillory, John. *Cultural Capital: The Problem of Literary Canon Formation*. University of Chicago Press, 1993.
+
+- Hayot, Eric. “Against Periodization; or, on Institutional Time.” *New Literary History*, vol. 42, no. 4, Autumn, 2011, pp. 739–56.
+
+- ------. *On Literary Worlds*. Oxford University Press, 2012.
+
+- Heller, Scott. “New Life for Modernism.” *Chronicle of Higher Education*, 5 Nov. 1999, p. A21.
+
+- Latham, Sean, and Gayle Rogers. *Modernism: Evolution of an Idea*. Bloomsbury, 2015.
+
+- Laudun, John, and Jonathan Goodwin. “Computing folklore studies: Mapping over a Century of Scholarly Production through Topics.” *Journal of American Folklore*, vol. 126, no. 502, Fall, 2013, pp. 455–75.
+
+- Levin, Harry. “What Was Modernism?” *Massachusetts Review*, vol. 1, no. 4, Summer, 1960, pp. 609–30.
+
+- Mao, Douglas, and Rebecca L. Walkowitz. “The New Modernist Studies.” *PMLA*, vol. 123, no. 3, May 2008, pp. 737–48.
+
+- McGann, Jerome J. *The Romantic Ideology: A Critical Investigation*. University of Chicago Press, 1983.
+
+- Merton, Robert K. “The Matthew Effect in Science.” *Science*, n.s., vol. 159, no. 3810, Jan. 1968, pp. 56–63.
+
+- *MLA International Bibliography*. *Ebscohost*.
+
+- "Modernist Latitudes." *Columbia University Press*, [cup.columbia.edu/series/modernist-latitudes](https://cup.columbia.edu/series/modernist-latitudes).
+
+- "Modernist Literature and Culture." *Oxford University Press*,
+\href{https://global.oup.com/academic/content/series/m/modernist-literature-and-culture-mlc}{global.oup.com/academic\\ /content/series/m/modernist-literature-and-culture-mlc}.
+
+- "*Modernism/modernity*." *Journal of Modern Literature* 18, no. 1 (Winter 1992), p. 136. *JSTOR*, [www.jstor.org/stable/3831542](http://www.jstor.org/stable/3831542).
+
+- Moretti, Franco. *Distant Reading*. Verso, 2013.
+
+- North, Michael. *Reading 1922: A Return to the Scene of the Modern*. Oxford University Press, 1999.
+
+- “Program.” *PMLA*, vol. 109, no. 6, Nov. 1994, pp. 1162–1283.
+
+- Saint-Amour, Paul K. *Tense Future: Modernism, Total War, Encyclopedic Form*. Oxford University Press, 2015.
+
+- Scott, Bonnie Kime, editor. *The Gender of Modernism*. Indiana University Press, 1990.
+
+- ------. Introduction. *The Gender of Modernism,* pp. 1–18.
+
+- Squier, Susan M. “The Modern City and the Construction of Female Desire: Wells’s *In the Days of the Comet* and Robins’s *The Convert*.” *Tulsa Studies in Women’s Literature*, vol. 8, no. 1, Spring, 1989, pp. 63–75.
+
+- Trumpener, Katie. “Modernist Geographies: The Provinces and the World.” *Literature Compass*, vol. 9, no. 9, 2012, pp. 623–30.
+
+- Underwood, Ted, and Jordan Sellers. "The *Longue Durée* of Literary Prestige." *MLQ*, vol. 77, no. 3, pp. 321–44, doi:10.1215/00267929-3570634.
+
+- Underwood Ted, et al. Word Frequencies in English-Language Literature, 1700-1922. Version 0.2. HathiTrust Research Center. doi:10.13012/J8JW8BSJ.
+
+- Verboord, Marc. “Classification of Authors by Literary Prestige.” *Poetics*, vol. 31, no. 3–4, June 2003, pp. 259–81.
+
+- Wellmon, Chad, and Andrew Piper. "Publication, Power, and Patronage: On Inequality and Academic Publishing." *Critical Inquiry*, online features, July 21, 2017. [https://criticalinquiry.uchicago.edu/publication_power_and_patronage_on_inequality_and_academic_publishing](https://criticalinquiry.uchicago.edu/publication_power_and_patronage_on_inequality_and_academic_publishing).
+
+- Wicke, Jennifer. “Appreciation, Depreciation: Modernism’s Speculative Bubble.” *Modernism/modernity*, vol. 8, no. 3, Sept. 2001, pp. 389–403.
+
+- Woolf, Virginia. “Modern Fiction.” *The Common Reader*, Harcourt, 1925, pp. 146–54.
+
