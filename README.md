@@ -17,7 +17,7 @@ A single throwaway remark in the paper makes use of a different dataset, the met
 
 Ted Underwood, Boris Capitanu, Peter Organisciak, Sayan Bhattacharyya, Loretta Auvil, Colleen Fallaw, J. Stephen Downie (2015). Word Frequencies in English-Language Literature, 1700-1922 (0.2) \[Dataset\]. HathiTrust Research Center. doi:10.13012/J8JW8BSJ.
 
-In order to reproduce the manuscript essay with all its figures and tables, run `make`. This invokes the `rmarkdown` R package to convert `paper.Rmd` into a [PDF](https://osf.io/wrhj2/). You will need the following R packages installed from CRAN for this process:
+In order to reproduce the manuscript essay with all its figures and tables, run `make`. This invokes the `rmarkdown` R package to generate a PDF file from paper-plain.Rmd; for comparison, I have committed a copy of the [output PDF](paper-plain.pdf) as generated on my system to the repository. You will need the following R packages installed from CRAN for this process:
 
 - rmarkdown
 - tidyverse
@@ -34,7 +34,7 @@ You will also need two small R packages I have written, available on github:
 
 And of course you will need all the dependencies of these, notably an installation of TeX. It would have been nice for me to formalize all these dependencies by making this an R package, but this project has taken long enough.
 
-If you do not own Garamond Premier Pro, you will have to change the typeface settings in [paper.Rmd](paper.Rmd) for the final typesetting to succeed. The font is mentioned 6 times total: 5 times in the YAML header and once more immediately after.
+In order to exactly reproduce my manuscript [PDF]([PDF](https://osf.io/wrhj2/) of the paper, you would need the font I have used, Garamond Premier Pro. The source code for the PDF as found at the [OSF repository](https://osf.io/frcys) is [paper.Rmd](paper.Rmd). Run `make paper.pdf` to generate this file, if you own the font. As you can see with a `diff` command, paper-plain.Rmd and paper.Rmd differ only in typeface settings (YAML header and one macro to style the paper title). 
 
 I cannot provide any technical assistance to other users of this material.
 
