@@ -9,7 +9,17 @@ Probably of most interest is the data analyzed. The data are derived from export
     + all items from the *Journal of Modern Literature* and *Modernism/modernity*;
     + all items from *American Literary History*, *American Quarterly*, and *American Literature*.
 
-- [subjects.tsv](generated/subjects.tsv): subject headings for every item listed in b.tsv, keyed by accession number.
+    `readr::read_tsv` will make a wrong guess about the type of the publisher column by default. Load this file with
+
+        ```R
+        library(readr)
+        b <- read_tsv("generated/b.tsv",
+            col_types=cols(id="c", pubtype="c", date="D", modernis_title="l",
+                           JO="c", PB="c")
+        )
+        ```
+
+- [subjects.tsv](generated/subjects.tsv): subject headings for every item listed in b.tsv, keyed by accession number. `read_tsv` will load both columns correctly with default settings.
 
 I wish to make a clear distinction between the reproducibility data and the bibliography itself, so this information cannot be used to reconstruct bibliographic database entries. It is enough, however, to repeat all the analyses in my paper, and may have other scholarly uses as well. I include the [R script](process_data.R) I used to generate these files from the downloaded bibliography results, but it is neither possible nor necessary to execute this script in order to reproduce my paper. (It is impossible because I cannot share my full data files. And unfortunately attempting to repeat my queries currently yields a defective dataset--at some time between 2016 and the moment of writing, the bulk download feature on EBSCOhost's MLAIB portal became leaky.)
 
