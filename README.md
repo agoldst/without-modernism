@@ -34,7 +34,7 @@ You will also need two small R packages I have written, available on github:
 
 And of course you will need all the dependencies of these, notably an installation of TeX. It would have been nice for me to formalize all these dependencies by making this an R package, but this project has taken long enough.
 
-In order to exactly reproduce my manuscript [PDF]([PDF](https://osf.io/wrhj2/) of the paper, you would need the font I have used, Garamond Premier Pro. The source code for the PDF as found at the [OSF repository](https://osf.io/frcys) is [paper.Rmd](paper.Rmd). Run `make paper.pdf` to generate this file, if you own the font. As you can see with a `diff` command, paper-plain.Rmd and paper.Rmd differ only in typeface settings (YAML header and one macro to style the paper title). 
+In order to exactly reproduce my manuscript [PDF](https://osf.io/wrhj2/) of the paper, you would need the font I have used, Garamond Premier Pro. The source code for the PDF as found at the [OSF repository](https://osf.io/frcys) is [paper.Rmd](paper.Rmd). Run `make paper.pdf` to generate this file, if you own the font. paper-plain.Rmd and paper.Rmd differ only in typeface settings; they are generated from a shared file, [paper-body.Rmd](paper-body.Rmd), with different headers ([paper-head.Rmd](paper-head.Rmd) and [paper-head-plain-Rmd](paper-head-plain.Rmd)) pasted on by the Make rules.
 
 I cannot provide any technical assistance to other users of this material.
 

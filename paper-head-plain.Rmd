@@ -1,0 +1,30 @@
+---
+title: "Modernist Studies without Modernism"
+date: '`r format(Sys.Date(), "%B %e, %Y")`'
+author: Andrew Goldstone
+biblatex-chicago: false
+nobib: true
+manual-title: true
+chicago-ellipses: true
+headers: true
+orhead: \textsc{``modernist studies without modernism''} \thepage
+ocfoot: '\footnotesize Last processed: `r format(Sys.time(), "%B %e, %Y %H:%M %Z")`'
+routput: false
+anon: false
+caption: [font=footnotesize]
+output:
+  scuro::chiaro_pdf:
+    includes:
+      in_header: preamble.tex
+---
+
+\makeoddhead{myheadings}{\small\textsc{andrew goldstone}
+}{}{}
+\thispagestyle{myheadings}
+
+\begin{center}%
+    \large
+Modernist Studies without Modernism \\
+\footnotesize (please refer to \href{https://osf.io/frcys}{osf.io/frcys} for the most recent circulating version of this essay)
+\end{center}
+

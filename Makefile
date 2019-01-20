@@ -1,5 +1,15 @@
-paper-plain.pdf: paper-plain.Rmd
-	R -e "rmarkdown::render('$<')"
+paper.Rmd: paper-head.Rmd paper-body.Rmd
+	cat $^ > $@
 
-paper.pdf: paper.Rmd
-	R -e "rmarkdown::render('$<')"
+paper-plain.Rmd: paper-head-plain.Rmd paper-body.Rmd
+	cat $^ > $@
+
+rmds := paper.Rmd paper-plain.Rmd
+
+mds := $(patsubst %.Rmd,%.md,$(rmds))
+pdfs := $(patsubst %.Rmd,%.pdf,$(rmds))
+
+$(pdfs): %.pdf: %.Rmd
+	R -e 'rmarkdown::render("$<")'
+
+.DEFAULT_GOAL := paper-plain.pdf
